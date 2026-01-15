@@ -18,9 +18,7 @@ data_hoje = datetime.now()
 locais = ['Trat. Preliminar','Reator UASB','Filtro Aeróbio','Reator UASB']
 selecionar_local = st.sidebar.selectbox('Escolha o Local', locais)
 
-col1, col2 = st.sidebar.columns(2)
-hora_inicio = col1.time_input("Horário de início:", value=datetime.now())
-hora_fim = col2.time_input("Horário de fim:", value=datetime.now() + timedelta(hours=0, minutes=15))
+hora_inicio = st.sidebar.time_input("Horário de início:", value=datetime.now())
 
 col1, col2, col3 = st.sidebar.columns(3)
 # ORP
@@ -48,6 +46,7 @@ valor_od = col1.text_input('Valor OD',0)
 temp_od = col2.text_input('Temp. OD',0)
 obs_od = col3.text_input('Obs. OD')
 
+hora_fim = st.sidebar.time_input("Horário de fim:", value=datetime.now() + timedelta(hours=0, minutes=15))
 
 if st.sidebar.button('Adicionar nova Leitura'):
     lista_adicionar = [selecionar_local,
