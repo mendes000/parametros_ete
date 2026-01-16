@@ -14,9 +14,10 @@ def carregar_dados(caminho):
     if caminho.exists():
         try:
             df = pd.read_parquet(caminho)
-            # Segurança: Garante que a coluna Cloro existe para evitar KeyError
             if 'Cloro_Residual' not in df.columns:
                 df['Cloro_Residual'] = 0.0
+            if 'Data_Coleta' not in df.columns:
+                df['Data_Coleta'] = pd.to_datetime(df['Data_Registro']).dt.date.astype(str)
             return df
         except:
             return pd.DataFrame()
@@ -29,6 +30,8 @@ if 'modo_edicao' not in st.session_state:
     st.session_state.modo_edicao = False
 if 'index_edicao' not in st.session_state:
     st.session_state.index_edicao = None
+if 'data_val' not in st.session_state:
+    st.session_state.data_val = datetime.now().date()
 if 'hora_ini_val' not in st.session_state:
     st.session_state.hora_ini_val = datetime.now().time()
 if 'hora_fim_val' not in st.session_state:
@@ -39,7 +42,11 @@ st.sidebar.header("⚙️ Gestão de Registros")
 
 if not df_ete.empty:
     with st.sidebar.expander("Modificar ou Excluir"):
-        opcoes_lista = df_ete.apply(lambda x: f"{x.name} | {x['Data_Registro']} | {x['Local']}", axis=1).tolist()
+        # Formatação da data na lista de seleção para DD/MM/YY
+        opcoes_lista = df_ete.apply(
+            lambda x: f"{x.name} | {datetime.strptime(x['Data_Coleta'], '%Y-%m-%d').strftime('%d/%m/%y')} | {x['Local']}", 
+            axis=1
+        ).tolist()
         selecionado = st.selectbox("Selecione o registro:", options=opcoes_lista)
         idx_selecionado = int(selecionado.split(" | ")[0])
 
@@ -59,7 +66,6 @@ if not df_ete.empty:
 # --- FORMULÁRIO DE ENTRADA / EDIÇÃO ---
 st.sidebar.header("📋 Formulário")
 
-# Carrega os valores da linha selecionada para edição, se aplicável
 val_default = df_ete.loc[st.session_state.index_edicao] if st.session_state.modo_edicao else None
 
 locais_opcoes = ['Trat. Preliminar', 'Reator UASB', 'Filtro Aeróbio', 'Calha Parshall']
@@ -67,16 +73,22 @@ idx_local = locais_opcoes.index(val_default['Local']) if val_default is not None
 selecionar_local = st.sidebar.selectbox('Escolha o Local', locais_opcoes, index=idx_local)
 
 with st.sidebar.form("form_parametros", clear_on_submit=True):
-    # Horários
+    
+    # DATA NO FORMATO DD/MM/YYYY NO INPUT
+    if val_default is not None:
+        d_edit = datetime.strptime(str(val_default['Data_Coleta']), "%Y-%m-%d").date()
+    else:
+        d_edit = st.session_state.data_val
+    
+    data_coleta = st.date_input("Data da Coleta:", value=d_edit, format="DD/MM/YYYY")
+
     h_ini_edit = datetime.strptime(val_default['Inicio'], "%H:%M").time() if val_default is not None else st.session_state.hora_ini_val
     h_inicio = st.time_input("Horário de início:", value=h_ini_edit)
     
-    # Campo Cloro com verificação de segurança para o KeyError
-    v_cloro_init = 0.0
-    if val_default is not None:
-        # Se a coluna existir no dado carregado, pega o valor, senão usa 0.0
-        v_cloro_init = float(val_default.get('Cloro_Residual', 0.0))
-        
+    st.markdown("---")
+    
+    # Parâmetros
+    v_cloro_init = float(val_default.get('Cloro_Residual', 0.0)) if val_default is not None else 0.0
     v_cloro = 0.0
     if selecionar_local == 'Calha Parshall':
         v_cloro = st.number_input("Cloro Residual (mg/L)", value=v_cloro_init, format="%.2f")
@@ -84,7 +96,6 @@ with st.sidebar.form("form_parametros", clear_on_submit=True):
     def trio_inputs(label, prefix):
         st.subheader(label)
         c1, c2 = st.columns(2)
-        # Verificamos se cada chave existe antes de acessar (segurança extra)
         v_val = float(val_default[f'{prefix}_Valor']) if val_default is not None else 0.0
         v_tmp = float(val_default[f'{prefix}_Temp']) if val_default is not None else 0.0
         v_obs = str(val_default[f'{prefix}_Obs']) if val_default is not None else ""
@@ -110,6 +121,7 @@ with st.sidebar.form("form_parametros", clear_on_submit=True):
 if btn_salvar:
     dados_novos = {
         'Data_Registro': val_default['Data_Registro'] if st.session_state.modo_edicao else datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        'Data_Coleta': str(data_coleta),
         'Local': str(selecionar_local),
         'Inicio': h_inicio.strftime("%H:%M"),
         'Fim': h_fim.strftime("%H:%M"),
@@ -122,14 +134,12 @@ if btn_salvar:
     }
 
     if st.session_state.modo_edicao:
-        # Atualiza a linha existente
         for col, val in dados_novos.items():
             df_ete.at[st.session_state.index_edicao, col] = val
         df_final = df_ete
         st.session_state.modo_edicao = False
         st.session_state.index_edicao = None
     else:
-        # Insere nova linha
         df_nova_linha = pd.DataFrame([dados_novos])
         df_final = pd.concat([df_ete, df_nova_linha], ignore_index=True)
 
@@ -146,6 +156,10 @@ if st.session_state.modo_edicao:
 # --- VISUALIZAÇÃO ---
 st.title("🧪 Controle de Parâmetros ETE")
 if not df_ete.empty:
-    st.dataframe(df_ete.iloc[::-1], use_container_width=True)
+    df_visualizacao = df_ete.copy()
+    # Converte a data de 'YYYY-MM-DD' para 'DD/MM/YYYY' apenas para exibição
+    df_visualizacao['Data_Coleta'] = pd.to_datetime(df_visualizacao['Data_Coleta']).dt.strftime('%d/%m/%Y')
+    
+    st.dataframe(df_visualizacao.iloc[::-1], use_container_width=True)
 else:
     st.info("Nenhum registro encontrado.")
