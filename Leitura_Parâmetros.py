@@ -20,50 +20,89 @@ def carregar_dados(caminho):
 
 df_ete = carregar_dados(caminho_parquet)
 
-# --- INICIALIZAÇÃO DO ESTADO (SESSION STATE) ---
+# --- ESTADOS DE SESSÃO (SESSION STATE) ---
+if 'modo_edicao' not in st.session_state:
+    st.session_state.modo_edicao = False
+if 'index_edicao' not in st.session_state:
+    st.session_state.index_edicao = None
 if 'hora_ini_val' not in st.session_state:
     st.session_state.hora_ini_val = datetime.now().time()
 if 'hora_fim_val' not in st.session_state:
     st.session_state.hora_fim_val = (datetime.now() + timedelta(minutes=15)).time()
 
-# --- INTERFACE LATERAL: INSERÇÃO ---
-st.sidebar.header("📋 Nova Leitura")
+# --- INTERFACE LATERAL: GESTÃO ---
+st.sidebar.header("⚙️ Gestão de Registros")
+
+# ABA DE EDIÇÃO/EXCLUSÃO
+if not df_ete.empty:
+    with st.sidebar.expander("Modificar ou Excluir"):
+        opcoes_lista = df_ete.apply(lambda x: f"{x.name} | {x['Data_Registro']} | {x['Local']}", axis=1).tolist()
+        selecionado = st.selectbox("Selecione o registro:", options=opcoes_lista)
+        idx_selecionado = int(selecionado.split(" | ")[0])
+
+        col_edit, col_del = st.columns(2)
+        
+        # Botão Editar
+        if col_edit.button("📝 Editar"):
+            st.session_state.modo_edicao = True
+            st.session_state.index_edicao = idx_selecionado
+            st.sidebar.info(f"Editando registro {idx_selecionado} no formulário abaixo.")
+
+        # Botão Excluir
+        if col_del.button("🗑️ Excluir"):
+            df_final = df_ete.drop(idx_selecionado).reset_index(drop=True)
+            df_final.to_parquet(caminho_parquet, engine='pyarrow', index=False)
+            st.cache_data.clear()
+            st.rerun()
+
+# --- FORMULÁRIO DE ENTRADA / EDIÇÃO ---
+st.sidebar.header("📋 Formulário")
+
+# Preencher valores se estiver em modo de edição
+val_default = df_ete.loc[st.session_state.index_edicao] if st.session_state.modo_edicao else None
 
 locais_opcoes = ['Trat. Preliminar', 'Reator UASB', 'Filtro Aeróbio', 'Calha Parshall']
-selecionar_local = st.sidebar.selectbox('Escolha o Local', locais_opcoes)
+idx_local = locais_opcoes.index(val_default['Local']) if val_default is not None else 0
+selecionar_local = st.sidebar.selectbox('Escolha o Local', locais_opcoes, index=idx_local)
 
 with st.sidebar.form("form_parametros", clear_on_submit=True):
-    h_inicio = st.time_input("Horário de início:", value=st.session_state.hora_ini_val)
-    st.markdown("---")
+    h_ini_edit = datetime.strptime(val_default['Inicio'], "%H:%M").time() if val_default is not None else st.session_state.hora_ini_val
+    h_inicio = st.time_input("Horário de início:", value=h_ini_edit)
     
+    # Campo Cloro
+    v_cloro_init = float(val_default['Cloro_Residual']) if val_default is not None else 0.0
     v_cloro = 0.0
     if selecionar_local == 'Calha Parshall':
-        st.subheader("🧪 Parâmetro Específico")
-        v_cloro = st.number_input("Cloro Residual (mg/L)", value=0.0, format="%.2f", key="v_cloro_exclusivo")
-        st.markdown("---")
+        v_cloro = st.number_input("Cloro Residual (mg/L)", value=v_cloro_init, format="%.2f")
 
-    def trio_inputs(label):
+    def trio_inputs(label, prefix):
         st.subheader(label)
         c1, c2 = st.columns(2)
-        val = c1.number_input(f"Valor {label}", value=0.0, format="%.2f", key=f"v_{label}")
-        temp = c2.number_input(f"Temp. {label}", value=0.0, format="%.1f", key=f"t_{label}")
-        obs = st.text_input(f"Obs. {label}", key=f"o_{label}")
-        st.markdown("---")
+        v_val = float(val_default[f'{prefix}_Valor']) if val_default is not None else 0.0
+        v_tmp = float(val_default[f'{prefix}_Temp']) if val_default is not None else 0.0
+        v_obs = str(val_default[f'{prefix}_Obs']) if val_default is not None else ""
+        
+        val = c1.number_input(f"Valor {label}", value=v_val, format="%.2f", key=f"v_{label}")
+        temp = c2.number_input(f"Temp. {label}", value=v_tmp, format="%.1f", key=f"t_{label}")
+        obs = st.text_input(f"Obs. {label}", value=v_obs, key=f"o_{label}")
         return val, temp, obs
 
-    v_orp, t_orp, o_orp = trio_inputs("ORP")
-    v_ph, t_ph, o_ph = trio_inputs("pH")
-    v_std, t_std, o_std = trio_inputs("STD")
-    v_condut, t_condut, o_condut = trio_inputs("Condutividade")
-    v_od, t_od, o_od = trio_inputs("OD")
+    v_orp, t_orp, o_orp = trio_inputs("ORP", "ORP")
+    v_ph, t_ph, o_ph = trio_inputs("pH", "pH")
+    v_std, t_std, o_std = trio_inputs("STD", "STD")
+    v_condut, t_condut, o_condut = trio_inputs("Condutividade", "Condut")
+    v_od, t_od, o_od = trio_inputs("OD", "OD")
 
-    h_fim = st.time_input("Horário de fim:", value=st.session_state.hora_fim_val)
-    btn_salvar = st.form_submit_button("✅ Salvar Leitura")
+    h_fim_edit = datetime.strptime(val_default['Fim'], "%H:%M").time() if val_default is not None else st.session_state.hora_fim_val
+    h_fim = st.time_input("Horário de fim:", value=h_fim_edit)
+    
+    texto_botao = "💾 Salvar Alterações" if st.session_state.modo_edicao else "✅ Salvar Leitura"
+    btn_salvar = st.form_submit_button(texto_botao)
 
-# --- LÓGICA DE SALVAMENTO ---
+# --- LÓGICA DE SALVAMENTO (INSERIR OU EDITAR) ---
 if btn_salvar:
-    dados_formatados = {
-        'Data_Registro': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    dados_novos = {
+        'Data_Registro': val_default['Data_Registro'] if st.session_state.modo_edicao else datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         'Local': str(selecionar_local),
         'Inicio': h_inicio.strftime("%H:%M"),
         'Fim': h_fim.strftime("%H:%M"),
@@ -74,53 +113,28 @@ if btn_salvar:
         'Condut_Valor': float(v_condut), 'Condut_Temp': float(t_condut), 'Condut_Obs': str(o_condut),
         'OD_Valor': float(v_od), 'OD_Temp': float(t_od), 'OD_Obs': str(o_od)
     }
-    df_nova_linha = pd.DataFrame([dados_formatados])
-    df_final = pd.concat([df_ete, df_nova_linha], ignore_index=True) if not df_ete.empty else df_nova_linha
-    
-    try:
-        df_final.to_parquet(caminho_parquet, engine='pyarrow', index=False)
-        st.cache_data.clear()
-        st.session_state.hora_ini_val = datetime.now().time()
-        st.session_state.hora_fim_val = (datetime.now() + timedelta(minutes=15)).time()
-        st.sidebar.success("✅ Dados salvos!")
-        st_time.sleep(1)
+
+    if st.session_state.modo_edicao:
+        df_ete.loc[st.session_state.index_edicao] = dados_novos
+        df_final = df_ete
+        st.session_state.modo_edicao = False
+        st.session_state.index_edicao = None
+    else:
+        df_nova_linha = pd.DataFrame([dados_novos])
+        df_final = pd.concat([df_ete, df_nova_linha], ignore_index=True)
+
+    df_final.to_parquet(caminho_parquet, engine='pyarrow', index=False)
+    st.cache_data.clear()
+    st.rerun()
+
+# --- BOTÃO PARA CANCELAR EDIÇÃO ---
+if st.session_state.modo_edicao:
+    if st.sidebar.button("❌ Cancelar Edição"):
+        st.session_state.modo_edicao = False
+        st.session_state.index_edicao = None
         st.rerun()
-    except Exception as e:
-        st.error(f"Erro ao salvar: {e}")
 
-# --- INTERFACE LATERAL: EXCLUSÃO SELECIONADA ---
-st.sidebar.markdown("---")
-st.sidebar.subheader("🗑️ Eliminar Registo")
-
-if not df_ete.empty:
-    # Criamos uma lista de opções amigável para o utilizador escolher
-    opcoes_exclusao = df_ete.apply(lambda x: f"{x.name} | {x['Data_Registro']} | {x['Local']}", axis=1).tolist()
-    selecionado_para_excluir = st.sidebar.selectbox("Selecione a linha para apagar:", options=opcoes_exclusao)
-    
-    # Extraímos o índice original (que está antes do primeiro '|')
-    indice_para_excluir = int(selecionado_para_excluir.split(" | ")[0])
-    
-    if st.sidebar.button("⚠️ Confirmar Eliminação"):
-        try:
-            # Removemos a linha pelo índice
-            df_final = df_ete.drop(indice_para_excluir)
-            # Resetamos o index para não haver buracos e salvar corretamente
-            df_final = df_final.reset_index(drop=True)
-            df_final.to_parquet(caminho_parquet, engine='pyarrow', index=False)
-            
-            st.cache_data.clear()
-            st.sidebar.warning(f"Registo {indice_para_excluir} removido!")
-            st_time.sleep(1)
-            st.rerun()
-        except Exception as e:
-            st.sidebar.error(f"Erro ao excluir: {e}")
-else:
-    st.sidebar.info("Sem dados para eliminar.")
-
-# --- ÁREA PRINCIPAL ---
+# --- VISUALIZAÇÃO ---
 st.title("🧪 Controle de Parâmetros ETE")
 if not df_ete.empty:
-    # Exibimos a tabela com o índice visível para facilitar a identificação
     st.dataframe(df_ete.iloc[::-1], use_container_width=True)
-else:
-    st.info("Aguardando registos...")
