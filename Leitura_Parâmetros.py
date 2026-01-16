@@ -59,7 +59,7 @@ if submit:
     df_ete.loc[datetime.now().strftime("%Y-%m-%d %H:%M:%S")] = nova_linha
     
     # Salva no arquivo
-    df_ete.to_excel(caminho)
+    df_ete.to_parquet(caminho)
     
     # LIMPA O CACHE para forçar a leitura do novo arquivo
     st.cache_data.clear()
